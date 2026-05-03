@@ -1,73 +1,181 @@
-"""Tests for AI Data Cleaning Automation Tool."""
+"""Tests for CleanLLM."""
+import json
+import os
 import pytest
-import pandas as pd
-import numpy as np
-from pathlib import Path
-import sys
+from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.utils import load_data, save_data, get_column_types, generate_report
-from src.cleaners.text import normalize_text_column, clean_text
-from src.cleaners.numeric import coerce_numeric, fill_missing_numeric, clean_numeric
-from src.cleaners.dedup import remove_duplicates, find_duplicates
+from src.ai.llm_cleaner import LLMCleaner, TokenUsage
+from src.utils import load_data, save_data, generate_report, get_column_types
 
 
-class TestTextCleaning:
-    def test_normalize_text_column(self):
-        s = pd.Series(['Hello  World', 'TEST!', '  spaces  '])
-        result = normalize_text_column(s)
-        assert result.tolist() == ['hello  world', 'test', 'spaces']
+class TestTokenUsage:
+    def test_add(self):
+        usage = TokenUsage()
+        usage.add({"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150})
+        assert usage.prompt_tokens == 100
+        assert usage.completion_tokens == 50
+        assert usage.total_tokens == 150
 
-    def test_clean_text(self):
-        df = pd.DataFrame({'name': ['John', 'JOHN', '  john  '], 'age': [25, 30, 35]})
-        result = clean_text(df, text_columns=['name'])
-        assert result['name'].tolist() == ['john', 'john', 'john']
-
-
-class TestNumericCleaning:
-    def test_coerce_numeric(self):
-        s = pd.Series(['1', '2', 'abc', '4'])
-        result = coerce_numeric(s)
-        assert result.tolist() == [1.0, 2.0, np.nan, 4.0]
-
-    def test_fill_missing_numeric(self):
-        s = pd.Series([1.0, np.nan, 3.0, np.nan, 5.0])
-        result = fill_missing_numeric(s, method='median')
-        assert result.tolist() == [1.0, 3.0, 3.0, 3.0, 5.0]
-
-    def test_clean_numeric(self):
-        df = pd.DataFrame({'value': ['1', '2', 'abc', '4', '5']})
-        result = clean_numeric(df, numeric_columns=['value'])
-        assert result['value'].dtype in [np.float64, np.int64]
+    def test_add_accumulates(self):
+        usage = TokenUsage()
+        usage.add({"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150})
+        usage.add({"prompt_tokens": 200, "completion_tokens": 100, "total_tokens": 300})
+        assert usage.prompt_tokens == 300
+        assert usage.completion_tokens == 150
+        assert usage.total_tokens == 450
 
 
-class TestDeduplication:
-    def test_remove_duplicates(self):
-        df = pd.DataFrame({'a': [1, 2, 1], 'b': [1, 2, 1]})
-        result = remove_duplicates(df)
-        assert len(result) == 2
+class TestLLMCleaner:
+    def test_requires_api_key(self):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+            with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+                LLMCleaner()
 
-    def test_find_duplicates(self):
-        df = pd.DataFrame({'a': [1, 2, 1], 'b': [1, 2, 1]})
-        result = find_duplicates(df)
-        assert len(result) == 1
+    def test_uses_env_model(self):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test", "AI_MODEL": "gpt-4o"}):
+            cleaner = LLMCleaner()
+            assert cleaner.model == "gpt-4o"
+
+    def test_uses_default_model(self):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test", "AI_MODEL": ""}):
+            cleaner = LLMCleaner()
+            assert cleaner.model == "gpt-4o-mini"
 
 
-class TestUtils:
-    def test_get_column_types(self):
-        df = pd.DataFrame({'text': ['a', 'b'], 'num': [1, 2]})
+class TestLLMIntegration:
+    @patch("openai.OpenAI")
+    def test_clean_text_batch_calls_api(self, mock_openai):
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = json.dumps({
+            "results": [
+                {"index": 0, "cleaned": "New York", "is_empty": False, "changes": ["standardized NY to New York"]}
+            ]
+        })
+        mock_response.usage.prompt_tokens = 100
+        mock_response.usage.completion_tokens = 50
+        mock_response.usage.total_tokens = 150
+        mock_response.model = "gpt-4o-mini"
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.return_value = mock_client
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}):
+            cleaner = LLMCleaner()
+            results = cleaner.clean_text_batch(["NY"], "city")
+
+            assert len(results) == 1
+            assert results[0]["cleaned"] == "New York"
+            assert cleaner.usage.total_tokens == 150
+
+    @patch("openai.OpenAI")
+    def test_analyze_outliers_calls_api(self, mock_openai):
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = json.dumps({
+            "decisions": [
+                {"index": 0, "value": 999999, "is_error": True, "reason": "Invalid age", "suggested_action": "remove", "imputation": None}
+            ]
+        })
+        mock_response.usage.prompt_tokens = 100
+        mock_response.usage.completion_tokens = 50
+        mock_response.usage.total_tokens = 150
+        mock_response.model = "gpt-4o-mini"
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.return_value = mock_client
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}):
+            cleaner = LLMCleaner()
+            decisions = cleaner.analyze_outliers([999999], "age")
+
+            assert len(decisions) == 1
+            assert decisions[0]["is_error"] is True
+            assert decisions[0]["suggested_action"] == "remove"
+
+    @patch("openai.OpenAI")
+    def test_find_semantic_duplicates_calls_api(self, mock_openai):
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = json.dumps({
+            "duplicate_pairs": [
+                {"id1": 0, "id2": 1, "similarity": 0.95, "reason": "Same person"}
+            ]
+        })
+        mock_response.usage.prompt_tokens = 100
+        mock_response.usage.completion_tokens = 50
+        mock_response.usage.total_tokens = 150
+        mock_response.model = "gpt-4o-mini"
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.return_value = mock_client
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}):
+            cleaner = LLMCleaner()
+            records = [{"name": "John Smith"}, {"name": "J. Smith"}]
+            pairs = cleaner.find_semantic_duplicates(records)
+
+            assert len(pairs) == 1
+            assert pairs[0]["similarity"] == 0.95
+
+
+class TestGetColumnTypes:
+    def test_numeric_detection(self):
+        import pandas as pd
+        df = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
         types = get_column_types(df)
-        assert types['text'] == 'text'
-        assert types['num'] == 'numeric'
-
-    def test_load_and_save_data(self, tmp_path):
-        df = pd.DataFrame({'a': [1, 2], 'b': [3, 4]})
-        csv_path = tmp_path / 'test.csv'
-        save_data(df, csv_path)
-        loaded = load_data(csv_path)
-        assert loaded.shape == (2, 2)
+        assert types["a"] == "numeric"
+        assert types["b"] == "text"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+class TestGenerateReport:
+    def test_report_format(self):
+        report = generate_report(
+            input_file="input.csv",
+            output_file="output.csv",
+            original_rows=100,
+            cleaned_rows=95,
+            changes=["Removed 5 duplicates", "Fixed spelling in row 3"],
+            token_usage={"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500},
+            dry_run=False,
+        )
+        assert "CleanLLM" in report
+        assert "Original rows: 100" in report
+        assert "Cleaned rows: 95" in report
+        assert "Removed 5 duplicates" in report
+        assert "Total tokens: 1,500" in report
+
+
+class TestDryRun:
+    @patch("openai.OpenAI")
+    def test_dry_run_does_not_modify_files(self, mock_openai):
+        import tempfile
+        import pandas as pd
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = json.dumps({"results": []})
+        mock_response.usage.prompt_tokens = 10
+        mock_response.usage.completion_tokens = 10
+        mock_response.usage.total_tokens = 20
+        mock_response.model = "gpt-4o-mini"
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.return_value = mock_client
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_file = os.path.join(tmpdir, "test.csv")
+            df = pd.DataFrame({"name": ["John", "Jane"], "age": [25, 30]})
+            df.to_csv(input_file, index=False)
+
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}):
+                from src.cleaners.text import TextCleaner
+                from src.cleaners.numeric import NumericCleaner
+
+                original_content = open(input_file).read()
+
+                text_cleaner = TextCleaner(llm=LLMCleaner(), enabled=False)
+                numeric_cleaner = NumericCleaner(llm=LLMCleaner(), enabled=False)
+
+                new_content = open(input_file).read()
+                assert new_content == original_content

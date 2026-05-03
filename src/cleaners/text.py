@@ -1,64 +1,41 @@
-"""Text normalization module."""
+"""AI-powered text cleaning using LLM."""
+import os
 import pandas as pd
-import numpy as np
-import re
-from typing import List, Dict, Any
+from typing import Optional
+
+from src.ai.llm_cleaner import LLMCleaner
 
 
-def normalize_text_column(series: pd.Series) -> pd.Series:
-    """Normalize text: lowercase, strip whitespace, remove punctuation."""
-    result = series.copy()
-    result = result.astype(str).str.lower()
-    result = result.str.strip()
-    result = result.str.replace(r'[^\w\s]', '', regex=True)
-    result = result.replace('nan', np.nan)
-    result = result.replace('none', np.nan)
-    return result
+class TextCleaner:
+    def __init__(self, llm: Optional[LLMCleaner] = None, enabled: bool = True):
+        self.llm = llm or LLMCleaner()
+        self.enabled = enabled and os.getenv("OPENAI_API_KEY") is not None
 
+    def clean_column(self, df: pd.DataFrame, column: str) -> tuple[pd.Series, list]:
+        if not self.enabled or column not in df.columns:
+            return df[column], []
 
-def fix_whitespace(series: pd.Series) -> pd.Series:
-    """Fix whitespace issues (multiple spaces, tabs, newlines)."""
-    result = series.copy()
-    result = result.astype(str).str.replace(r'\s+', ' ', regex=True)
-    result = result.str.strip()
-    result = result.replace('nan', np.nan)
-    return result
+        texts = df[column].fillna("").astype(str).tolist()
+        changes = []
 
+        max_batch = int(os.getenv("MAX_BATCH_SIZE", 100))
+        all_results = []
 
-def standardize_casing(series: pd.Series, style: str = 'lower') -> pd.Series:
-    """Standardize text casing."""
-    result = series.copy()
-    if style == 'lower':
-        result = result.astype(str).str.lower()
-    elif style == 'upper':
-        result = result.astype(str).str.upper()
-    elif style == 'title':
-        result = result.astype(str).str.title()
-    result = result.replace('nan', np.nan)
-    return result
+        for i in range(0, len(texts), max_batch):
+            batch = texts[i:i + max_batch]
+            try:
+                results = self.llm.clean_text_batch(batch, column_name=column)
+                all_results.extend(results)
+            except Exception as e:
+                raise RuntimeError(f"Text cleaning failed for column '{column}': {e}")
 
+        cleaned_values = []
+        for idx, result in enumerate(all_results):
+            if result.get("is_empty", False):
+                cleaned_values.append(None)
+            else:
+                cleaned_values.append(result.get("cleaned", texts[idx]))
+            for change in result.get("changes", []):
+                changes.append(f"Row {idx}: {change}")
 
-def clean_text(df: pd.DataFrame, text_columns: List[str] = None, report: List[Dict[str, Any]] = None) -> pd.DataFrame:
-    """Apply text cleaning to text columns."""
-    if report is None:
-        report = []
-
-    df = df.copy()
-    if text_columns is None:
-        text_columns = df.select_dtypes(include='object').columns.tolist()
-
-    for col in text_columns:
-        if col not in df.columns:
-            continue
-        original_nulls = df[col].isna().sum()
-        df[col] = normalize_text_column(df[col])
-        df[col] = fix_whitespace(df[col])
-
-        new_nulls = df[col].isna().sum()
-        if new_nulls != original_nulls:
-            report.append({
-                'type': 'text',
-                'description': f"Column '{col}': normalized text, {new_nulls} null values after cleaning"
-            })
-
-    return df
+        return pd.Series(cleaned_values, index=df.index), changes
