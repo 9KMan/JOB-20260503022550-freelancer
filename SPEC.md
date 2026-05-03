@@ -1,37 +1,70 @@
-# Specification: AI software to automate tasks, especially for cleaning mixed data. Key requirements: Automate data entry, email responses, or scheduling tasks; Clean mixed data (text and numerical). Ideal: Proficiency in AI and automation tools, experience with data cleaning (mixed data types), familiarity with handling large datasets.
+# SPEC: AI Data Cleaning Automation Tool
 
 ## 1. Project Overview
 
-**Project:** AI software to automate tasks, especially for cleaning mixed data. Key requirements: Automate data entry, email responses, or scheduling tasks; Clean mixed data (text and numerical). Ideal: Proficiency in AI and automation tools, experience with data cleaning (mixed data types), familiarity with handling large datasets.
+**Project:** AI-powered data cleaning automation for mixed text + numerical datasets.  
 **GitHub Repo:** https://github.com/9KMan/JOB-20260503022550-freelancer
+
+Cleans dirty CSV/Excel/JSON data: fixes missing values, removes duplicates, normalizes text, validates numeric fields, and exports clean datasets ready for analysis.
 
 ## 2. Technical Stack
 
-Python · AI/ML · Pandas · Automation
+- Python 3.11+
+- pandas, numpy, openpyxl
+- pytest (tests)
+- Docker
 
 ## 3. Architecture
 
-TODO: Define architecture based on job requirements.
+```
+cleaner.py          # CLI entry point
+src/
+  utils.py          # Shared helpers (type detection, column profiling)
+  cleaners/
+    text.py         # Text normalization (lowercase, strip, deduplicate whitespace)
+    numeric.py      # Numeric validation (outliers, type coercion, fill missing)
+    dedup.py        # Deduplication (exact + fuzzy)
+data/
+  raw/              # Input files
+  clean/            # Output files
+```
 
 ## 4. Key Components
 
-TODO: List key components based on job requirements.
+| Component | Description |
+|---|---|
+| `cleaner.py` | CLI: `--input`, `--output`, `--dry-run`, `--verbose` |
+| `text.py` | Text normalization, whitespace, encoding fixes |
+| `numeric.py` | Outlier detection, type coercion, median/mode fill |
+| `dedup.py` | Exact + fuzzy deduplication |
+| `utils.py` | Column profiling, type detection, change reporting |
 
 ## 5. Deliverables
 
-- [ ] Core backend API
-- [ ] Frontend application
-- [ ] Database models
-- [ ] Tests
-- [ ] README documentation
-- [ ] Docker deployment
+- [x] `cleaner.py` — main CLI entry point
+- [x] `src/cleaners/text.py` — text normalization
+- [x] `src/cleaners/numeric.py` — numeric validation
+- [x] `src/cleaners/dedup.py` — deduplication
+- [x] `src/utils.py` — shared helpers
+- [x] `requirements.txt` — pandas, numpy, openpyxl
+- [x] `Dockerfile` — containerized execution
+- [x] `tests/test_cleaner.py` — pytest unit tests
+- [x] `README.md` — usage docs with examples
 
-## 6. Milestones
+## 6. Usage
 
-| Phase | Description | Duration |
-|-------|-------------|----------|
-| 1 | Core implementation | Week 1-2 |
-| 2 | Features | Week 3-4 |
-| 3 | Testing & deployment | Week 5-6 |
+```bash
+# Clean a dataset
+python cleaner.py --input data/raw/survey.csv --output data/clean/
 
-**GitHub Repo:** https://github.com/9KMan/JOB-20260503022550-freelancer
+# Dry run (preview changes)
+python cleaner.py --input data/raw/survey.csv --dry-run
+
+# Docker
+docker build -t cleaner . && docker run -v $(pwd)/data:/data cleaner --input /data/raw/input.csv --output /data/clean/
+```
+
+## 7. Output
+
+- Cleaned dataset (CSV/JSON/Excel)
+- `cleaning_report.txt` — documents all changes made
