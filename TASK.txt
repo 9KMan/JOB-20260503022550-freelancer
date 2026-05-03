@@ -1,0 +1,26 @@
+# Build Task: JOB-20260503022550-freelancer
+
+## Job
+Build an AI data cleaning automation tool from SPEC.md.
+
+## Workflow
+1. Read SPEC.md in this directory
+2. Implement ALL items in SPEC.md deliverables section
+3. Push all code to GitHub
+
+## Tech Stack
+Python, pandas, numpy
+
+## Requirements
+- Data ingestion (CSV, Excel, JSON)
+- Smart cleaning (missing values, duplicates, type errors, whitespace)
+- Text normalization
+- Numeric validation (outliers, type coercion)
+- Export to CSV/JSON/Excel
+- Update README.md
+- requirements.txt
+- Dockerfile or docker-compose.yml
+- Basic tests
+
+## Deliverables
+Push to GitHub before finishing.
