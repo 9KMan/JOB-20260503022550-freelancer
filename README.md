@@ -14,7 +14,7 @@ Automates data cleaning for mixed text + numerical datasets. Scrapes, normalizes
 
 ```bash
 pip install -r requirements.txt
-python cleaner.py --input data/raw MessyData.csv --output data/clean/
+python cleaner.py --input data/raw/MessyData.csv --output data/clean/
 ```
 
 ## Project Structure
@@ -30,7 +30,11 @@ python cleaner.py --input data/raw MessyData.csv --output data/clean/
     numeric.py      # Numeric validation
     dedup.py        # Deduplication
   utils.py          # Shared helpers
+/tests
+  test_cleaner.py   # Unit tests
 requirements.txt
+Dockerfile
+pytest.ini
 README.md
 ```
 
@@ -49,8 +53,31 @@ python cleaner.py --input data/raw/survey.csv --dry-run
 
 # Verbose output
 python cleaner.py --input data/raw/survey.csv --verbose
+
+# Skip deduplication
+python cleaner.py --input data/raw/survey.csv --output data/clean/ --no-dedup
+
+# Don't cap outliers
+python cleaner.py --input data/raw/survey.csv --output data/clean/ --no-cap-outliers
+
+# Specify columns explicitly
+python cleaner.py --input data/raw/survey.csv --output data/clean/ \
+    --text-columns name email --numeric-columns age salary
 ```
 
 ## Output
 
 Clean dataset + `cleaning_report.txt` documenting all changes made.
+
+## Running Tests
+
+```bash
+pytest tests/ -v
+```
+
+## Docker
+
+```bash
+docker build -t ai-data-cleaner .
+docker run -v $(pwd)/data:/data ai-data-cleaner --input /data/raw/survey.csv --output /data/clean/
+```
